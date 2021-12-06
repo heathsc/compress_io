@@ -44,6 +44,7 @@ pub fn cond_add_suffix<P: AsRef<Path>, Q: AsRef<Path>>(path: P, suffix: Q) -> Pa
 	}
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct CheckBuf(Vec<u8>);
 
 impl Default for CheckBuf {
@@ -65,6 +66,8 @@ impl DerefMut for CheckBuf {
 }
 
 impl CheckBuf {
+	pub fn new() -> Self { Self::default() }
+
 	pub fn clear(&mut self) {
 		self.0.clear()
 	}

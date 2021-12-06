@@ -6,7 +6,7 @@ use std::{
 
 use crate::tools::*;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum CompressThreads {
 	Default,
 	Set(usize),
@@ -18,7 +18,20 @@ impl Default for CompressThreads {
 	fn default() -> Self { Self::Default }
 }
 
+impl fmt::Display for CompressThreads {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Default => write!(f, "Default"),
+			Self::Set(x) => write!(f, "Set({})", x),
+			Self::NCores => write!(f, "NCores"),
+			Self::NPhysCores => write!(f, "NPhysCores"),
+		}
+	}
+}
+
 impl CompressThreads {
+	pub fn new() -> Self { Self::default() }
+
 	pub fn n_threads(&self) -> Option<usize> {
 		match self {
 			Self::Default => None,

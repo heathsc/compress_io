@@ -44,10 +44,15 @@ fn piped_stdin<W: AsyncWriteExt + Unpin + Send + 'static>(buf: CheckBuf, mut wr:
 	});
 }
 
+#[derive(Debug)]
 pub enum PipeType {
 	Stdio(Stdio),
 	Pipe(CheckBuf),
 	Stdin,
+}
+
+impl Default for PipeType {
+	fn default() -> Self { Self::Stdin }
 }
 
 impl Filter {

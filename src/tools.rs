@@ -8,13 +8,14 @@ use std::{
 use crate::compress_type::{CompressType, CompressThreads};
 use crate::path_utils::find_exec_path;
 
-struct ToolKey {
+#[derive(Debug, Hash)]
+pub struct ToolKey {
 	ix: usize,
 	priority: usize,
 }
 
 impl ToolKey {
-	fn new(ix: usize, priority: usize) -> Self {
+	pub fn new(ix: usize, priority: usize) -> Self {
 		Self { ix, priority }
 	}
 }
@@ -39,7 +40,7 @@ impl PartialEq for ToolKey {
 
 impl Eq for ToolKey { }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ToolRegister {
 	decompress_tools: HashMap<CompressType, Vec<ToolKey>>,
 	compress_tools: HashMap<CompressType, Vec<ToolKey>>,
@@ -47,6 +48,8 @@ pub struct ToolRegister {
 }
 
 impl ToolRegister {
+	pub fn new() -> Self { Self::default() }
+
 	fn add(mut self, mut tool: Tool) -> Self {
 		tool.add_path();
 		let ix = self.tools.len();
@@ -89,7 +92,7 @@ impl ToolRegister {
 	}	
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct ToolMap {
 	decompress: Vec<Service>,
 	compress: Vec<Service>,
@@ -125,6 +128,7 @@ impl ToolMap {
 	}
 }
 
+#[derive(Debug)]
 pub struct Tool {
 	name: Box<str>,
 	inner: ToolMap,
@@ -169,6 +173,7 @@ impl Tool {
 	}
 }
 
+#[derive(Debug)]
 pub struct Service {
 	compress_type: CompressType,
 	options: Vec<ToolOpt>,
@@ -211,6 +216,7 @@ impl Service {
 	}
 }
 
+#[derive(Debug, Eq, PartialEq, Clone, Hash)]
 pub enum ToolOpt {
 	Short(Box<str>),
 	Long(Box<str>),
