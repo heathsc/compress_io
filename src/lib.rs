@@ -1,7 +1,7 @@
 //! Convenience library for reading and writing compressed files / streams
 //!
 //! `compress_io`` does not provide the compression/decompression itself but uses external utilities
-//! such as [gzip], [bzip2] or [zstd] as read or write filters.  The aim of this crate is to make
+//! such as [gzip], [bzip2] or [zstd] as read or write filters.  The aim of `compress_io` is to make
 //! it simple for an application to support multiple compression formats with a minimal effort
 //! from the developer and also from the user (i.e., an application can accept uncompressed
 //! or compressed input in a range of different formats and neither the developer nor the user
@@ -118,7 +118,7 @@
 //!
 //! ## Usage
 //!
-//! For usage with synchronous code only, add `clap` as a dependency in your `Cargo.toml` to
+//! For usage with synchronous code only, add `compress_io` as a dependency in your `Cargo.toml` to
 //! use from crates.io:
 //!
 //! ```toml
