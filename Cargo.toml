@@ -1,0 +1,18 @@
+[package]
+name = "compress_io"
+version = "0.2.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+async = ["tokio", "tokio-pipe"]
+
+[dependencies]
+libc = "0.2"
+num_cpus = "1.13"
+lazy_static = "1.4"
+tempfile = "3.2"
+os_pipe = "1"
+tokio = { version = "1", features = ["io-std", "io-util", "fs", "process", "rt", "rt-multi-thread"], optional = true }
+tokio-pipe = { version = "0.2", optional = true }
