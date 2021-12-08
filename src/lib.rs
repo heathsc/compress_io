@@ -172,7 +172,7 @@ mod tests {
 	};
 	use std::{
 		path::{PathBuf, Path},
-		io::Read,
+		io::{Read, Write},
 	};
 	use tempfile::TempDir;
 
@@ -197,8 +197,13 @@ mod tests {
 			let test_string = "Testing testing 123";
 			assert_eq!(CompressType::from_suffix(&name), ctypes[0]);
 			{
-				let mut wrt = CompressIo::new().path(&name).make_writer(bufwriter).expect("Could not make file");
-				write!(wrt, "{}", test_string).expect("Error writing to file");
+				if bufwriter {
+					let mut wrt = CompressIo::new().path(&name).bufwriter().expect("Could not make file");
+					write!(wrt, "{}", test_string).expect("Error writing to file");
+				} else {
+					let mut wrt = CompressIo::new().path(&name).writer().expect("Could not make file");
+					write!(wrt, "{}", test_string).expect("Error writing to file");
+				}
 			}
 			test_rd(&name, ctypes[1], test_string);		
 		}

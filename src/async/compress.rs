@@ -1,6 +1,6 @@
 use tokio::{
 	process::{Child, ChildStdin, ChildStdout, Command},
-	io::{self, AsyncRead, AsyncReadExt, AsyncWriteExt, AsyncWrite, BufReader, BufWriter, AsyncBufRead, Stdout, stdin, stdout, Error, ErrorKind },
+	io::{self, AsyncRead, AsyncReadExt, AsyncWriteExt, AsyncWrite, BufReader, BufWriter, Stdout, stdin, stdout, Error, ErrorKind },
 	fs::File,
 	runtime::Runtime,
 };
@@ -78,30 +78,8 @@ impl Filter {
 			},
 		})
 	}
-
-	pub async fn new_bufread_filter<P: AsRef<Path>>(&self, name: Option<P>, buf: CheckBuf) -> io::Result<Box<dyn AsyncBufRead + Unpin>> {
-
-		let buf = if name.is_none() && !buf.is_empty() { Some(buf) } else { None };
-		Ok(match self {
-			Filter::NoFilter => if let Some(s) = name {
-				Box::new(BufReader::new(File::open(s.as_ref()).await?))
-			} else if let Some(b) = buf {
-				let (rd, wr) = pipe().expect("Couldn't open pipe");
-				piped_stdin(b, wr);
-				Box::new(BufReader::new(rd))
-			} else {
-				Box::new(BufReader::new(stdin()))
-			},
-			Filter::Filter(f)=> if let Some(s) = name {
-				Box::new(BufReader::new(open_read_filter(f, PipeType::Stdio(Stdio::from(File::open(s.as_ref()).await?.into_std().await))).await?))
-			} else {
-				let input = if let Some(b) = buf { PipeType::Pipe(b) } else { PipeType::Stdin };
-				Box::new(BufReader::new(open_read_filter(f, input).await?))
-			},
-		})
-	}
 	
-	pub async fn new_write_filter<P: AsRef<Path>>(&self, name: Option<P>, bufwriter: bool, fix_path: bool) -> io::Result<Box<dyn AsyncWrite + Unpin>> {
+	pub async fn new_write_filter<P: AsRef<Path>>(&self, name: Option<P>, fix_path: bool) -> io::Result<Box<dyn AsyncWrite + Unpin>> {
 
 		// Add compression suffix if required (and not already present and fix_path is not set)
 		let name = match (name, self) {
@@ -110,35 +88,20 @@ impl Filter {
 			_ => None,
 		};
 		
-		if bufwriter {
-			Ok(match self {
-				Filter::NoFilter => if let Some(s) = name {					
-					Box::new(BufWriter::new(Writer::from_file(File::create(&s).await?)))
-				} else {
-					Box::new(BufWriter::new(Writer::from_stdout()))
-				},
-				Filter::Filter(f) => if let Some(s) = name {
-					Box::new(BufWriter::new(Writer::from_child(open_write_filter(f, Some(Stdio::from(File::create(&s).await?.into_std().await))).await?)))
-				} else {
-					Box::new(BufWriter::new(Writer::from_child(open_write_filter(f, None).await?)))
-				},
-			})
-				
-		} else {				
-			Ok(match self {
-				Filter::NoFilter => if let Some(s) = name {
-					Box::new(Writer::from_file(File::create(&s).await?))
-				} else {
-					Box::new(Writer::from_stdout())
-				},
-				Filter::Filter(f) => if let Some(s) = name {
-					Box::new(Writer::from_child(open_write_filter(f, Some(Stdio::from(File::create(&s).await?.into_std().await))).await?))
-				} else {
-					Box::new(Writer::from_child(open_write_filter(f, None).await?))
-				},
-			})
-		}
+		Ok(match self {
+			Filter::NoFilter => if let Some(s) = name {
+				Box::new(Writer::from_file(File::create(&s).await?))
+			} else {
+				Box::new(Writer::from_stdout())
+			},
+			Filter::Filter(f) => if let Some(s) = name {
+				Box::new(Writer::from_child(open_write_filter(f, Some(Stdio::from(File::create(&s).await?.into_std().await))).await?))
+			} else {
+				Box::new(Writer::from_child(open_write_filter(f, None).await?))
+			},
+		})
 	}
+
 	pub fn new_decompress_filter(ctype: CompressType) -> io::Result<Self> {
 		
 		Ok(match ctype {
@@ -310,20 +273,16 @@ impl AsyncCompressIo {
 	}
 
 	pub async fn reader(&self) -> io::Result<Box<dyn AsyncRead + Unpin>> {
-		let (filter, buf) = self.make_decompress_filter().await?;
+		let mut buf = CheckBuf::default();
+		let filter = Filter::new_decompress_filter(check_read_ctype(self.path.as_ref(), self.ctype, Some(&mut buf))?)?;
 		filter.new_read_filter(self.path.as_ref(), buf).await
 	}
 
-	pub async fn bufreader(&self) -> io::Result<Box<dyn AsyncBufRead + Unpin>> {
-		let (filter, buf) = self.make_decompress_filter().await?;
-		filter.new_bufread_filter(self.path.as_ref(), buf).await
+	pub async fn bufreader(&self) -> io::Result<BufReader<Box<dyn AsyncRead + Unpin>>> {
+		self.reader().await.map(|r| BufReader::new(r))
 	}
 
-	pub async fn writer(&self) -> io::Result<Box<dyn AsyncWrite + Unpin>> { self.make_writer(false).await }
-
-	pub async fn bufwriter(&self) -> io::Result<Box<dyn AsyncWrite + Unpin>> { self.make_writer(true).await }
-
-	pub async fn make_writer(&self, bufwriter: bool) -> io::Result<Box<dyn AsyncWrite + Unpin>> {
+	pub async fn writer(&self) -> io::Result<Box<dyn AsyncWrite + Unpin>> {
 		let ctype = if self.ctype == CompressType::Unknown {
 			if let Some(p) = self.path.as_ref() {
 				CompressType::from_suffix(p)
@@ -334,12 +293,10 @@ impl AsyncCompressIo {
 			self.ctype
 		};
 		let filter = Filter::new_compress_filter(ctype, self.cthreads)?;
-		filter.new_write_filter(self.path.as_ref(), bufwriter, self.fix_path).await
+		filter.new_write_filter(self.path.as_ref(), self.fix_path).await
 	}
 
-	async fn make_decompress_filter(&self) -> io::Result<(Filter, CheckBuf)> {
-		let mut buf = CheckBuf::default();
-		Filter::new_decompress_filter(check_read_ctype(self.path.as_ref(), self.ctype, Some(&mut buf))?)
-			.map(|f| (f, buf))
+	pub async fn bufwriter(&self) -> io::Result<BufWriter<Box<dyn AsyncWrite + Unpin>>> {
+		self.writer().await.map(|w| BufWriter::new(w))
 	}
 }
