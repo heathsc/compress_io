@@ -15,9 +15,11 @@ use std::{
 
 use tokio_pipe::pipe;
 
-use crate::compress_type::{CompressThreads, CompressType};
-use crate::filter_spec:: FilterSpec;
-use crate::path_utils::*;
+use crate::{
+	compress_type::{CompressThreads, CompressType},
+	filter_spec::FilterSpec,
+	path_utils::*,
+};
 
 #[derive(Debug)]
 pub enum Filter {
@@ -154,7 +156,7 @@ pub async fn open_read_filter(f: &FilterSpec, input: PipeType) -> io::Result<Chi
 		Err(error) => Err(Error::new(ErrorKind::Other, format!("Error executing pipe command '{}': {}", f.path().display(), error))),
 	}
 }
-	
+
 pub async fn open_write_filter(f: &FilterSpec, output: Option<Stdio>) -> io::Result<Child> {	
 	let mut com = Command::new(f.path());
 	let com = match output {
@@ -165,7 +167,7 @@ pub async fn open_write_filter(f: &FilterSpec, output: Option<Stdio>) -> io::Res
 		Ok(proc) => Ok(proc),
 		Err(error) => Err(Error::new(ErrorKind::Other, format!("Error executing pipe command '{}': {}", f.path().display(), error))),
 	}
-}	
+}
 
 struct WriterType<T: AsyncWrite + Unpin> {
 	inner: T,
