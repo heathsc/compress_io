@@ -5,6 +5,18 @@ use std::{
 
 use super::compress_type::CompressType;
 
+/// Representation of a filter: an external utility which will be spawned
+/// (using [`spawn`]) to filter an input or output stream.
+///
+/// Users will not normally interact directly with `FilterSpec` unless they are using a custom
+/// filter utility rather than those selected automatically by [`CompressIo`].  After creation a
+/// `FilterSpec` instance is used to spawn a read or write filter using [`open_read_filter`] or
+/// [`open_write_filter`]
+///
+/// [`open_read_filter`]: crate::compress::open_read_filter
+/// [`open_write_filter`]: crate::compress::open_write_filter
+/// [`spawn`]: std::process::Command::spawn
+///
 #[derive(Debug)]
 pub struct FilterSpec {
 	path: PathBuf,
@@ -40,8 +52,8 @@ impl FilterSpec {
 		}
 	}
 	
-	pub(crate) fn compress_type(&self) -> Option<CompressType> { self.compress_type }
-	pub(crate) fn path(&self) -> &Path { &self.path}
-	pub(crate) fn args(&self) -> &[Box<OsStr>] { &self.args}
+	pub fn compress_type(&self) -> Option<CompressType> { self.compress_type }
+	pub fn path(&self) -> &Path { &self.path}
+	pub fn args(&self) -> &[Box<OsStr>] { &self.args}
 }
 

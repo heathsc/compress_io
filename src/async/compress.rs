@@ -122,13 +122,18 @@ impl Filter {
 	}
 
 	pub fn new_compress_filter(ctype: CompressType, cthreads: CompressThreads) -> io::Result<Self> {
-		let tool = ctype.get_compress_tool()?;
-			
-		// Neither of the two statements below should panic unless something has gone wrong...
-		let path = tool.path().expect("Unknown path for selected tool");
-		let service = tool.get_compress(ctype).expect("tool does not support selected compress type");
+		Ok(match ctype {
+			CompressType::NoFilter => Filter::NoFilter,
+			_ => {
+				let tool = ctype.get_compress_tool()?;
 
-		Ok(Filter::Filter(FilterSpec::new_compress(path, service.args(cthreads), ctype)))
+				// Neither of the two statements below should panic unless something has gone wrong...
+				let path = tool.path().expect("Unknown path for selected tool");
+				let service = tool.get_compress(ctype).expect("tool does not support selected compress type");
+
+				Filter::Filter(FilterSpec::new_compress(path, service.args(cthreads), ctype))
+			},
+		})
 	}
 }
 

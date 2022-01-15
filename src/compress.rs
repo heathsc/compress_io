@@ -38,7 +38,7 @@ fn piped_stdin(buf: CheckBuf) -> PipeReader {
 }
 
 impl Filter {
-	pub fn new_read_filter<P: AsRef<Path>>(&self, name: Option<P>, buf: CheckBuf) -> io::Result<Box<dyn Read>> {
+	pub fn reader<P: AsRef<Path>>(&self, name: Option<P>, buf: CheckBuf) -> io::Result<Box<dyn Read>> {
 
 		let pipe = if name.is_none() && !buf.is_empty() { Some(piped_stdin(buf))  } else { None };
 		Ok(match self {
@@ -57,7 +57,7 @@ impl Filter {
 		})
 	}
 	
-	pub fn new_write_filter<P: AsRef<Path>>(&self, name: Option<P>, fix_path: bool) -> io::Result<Box<dyn Write>> {
+	pub fn writer<P: AsRef<Path>>(&self, name: Option<P>, fix_path: bool) -> io::Result<Box<dyn Write>> {
 
 		// Add compression suffix if required (and not already present and fix_path is not set)
 		let name = match (name, self) {
@@ -71,7 +71,7 @@ impl Filter {
 			Filter::NoFilter => if let Some(s) = name {
 				Box::new(Writer::from_file(File::create(&s)?))
 			} else {
-				eprintln!("Aha");
+
 				Box::new(Writer::from_stdout())
 			},
 			Filter::Filter(f) => if let Some(s) = name {
@@ -196,6 +196,32 @@ impl Writer {
 	}
 }	
 
+/// A compressed reader or writer builder, giving control as to how the reader is generated.
+///
+/// A default config can be generated using `CompressIo::new()` followed by `reader()`,
+/// `bufreader()`, `writer()` or `bufwriter()` to make the reader or writer.  Additional
+/// commands can be used to set the file name, specify the compression to be used, or
+/// set additional options prior to opening the reader or writer.
+///
+/// # Examples
+///
+/// Open an xz compressed file `foo.xz`, read the contents into a string, and write out
+/// the contents to a gzip compressed file `bar.gz`
+///
+/// ```no_run
+///  use std::io::{self, prelude::*};
+///  use compress_io::compress::CompressIo;
+///
+///  fn main() -> io::Result<()> {
+///    let mut rd = CompressIo::new().path("foo.xz").reader()?;
+///    let mut buffer = String::new();
+///    rd.read_to_string(&mut buffer)?;
+///
+///    let mut wrt = CompressIo::new().path("bar.gz").writer()?;
+///    write!(wrt, "{}", buffer)
+///  }
+/// ```
+///
 #[derive(Default, Debug)]
 pub struct CompressIo {
 	path: Option<PathBuf>,
@@ -377,7 +403,7 @@ impl CompressIo {
 	pub fn reader(&self) -> io::Result<Box<dyn Read>> {
 		let mut buf = CheckBuf::default();
 		let filter = Filter::new_decompress_filter(check_read_ctype(self.path.as_ref(), self.ctype, Some(&mut buf))?)?;
-		filter.new_read_filter(self.path.as_ref(), buf)
+		filter.reader(self.path.as_ref(), buf)
 	}
 
 	/// Generates a [`BufReader`] instance using the supplied settings.  This will return [`io::Error`]
@@ -431,7 +457,7 @@ impl CompressIo {
 			self.ctype
 		};
 		let filter = Filter::new_compress_filter(ctype, self.cthreads)?;
-		filter.new_write_filter(self.path.as_ref(), self.fix_path)
+		filter.writer(self.path.as_ref(), self.fix_path)
 	}
 
 	/// Generates a [`BufWriter'] instance using the supplied settings.  This will return
