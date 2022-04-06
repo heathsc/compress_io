@@ -1,7 +1,7 @@
 use std::{
 	path::{Path, PathBuf},
 	process::{Child, ChildStdin, ChildStdout, Command, Stdio},
-	io::{self, Read, Write, BufReader, BufWriter, Stdout, stdin, stdout, Error, ErrorKind},
+	io::{self, Read, Write, BufReader, BufWriter, Stdout, Stdin, stdin, stdout, Error, ErrorKind},
 	fs::File,
 	thread,
 };
@@ -38,26 +38,26 @@ fn piped_stdin(buf: CheckBuf) -> PipeReader {
 }
 
 impl Filter {
-	pub fn reader<P: AsRef<Path>>(&self, name: Option<P>, buf: CheckBuf) -> io::Result<Box<dyn Read>> {
+	pub fn reader<P: AsRef<Path>>(&self, name: Option<P>, buf: CheckBuf) -> io::Result<Reader> {
 
 		let pipe = if name.is_none() && !buf.is_empty() { Some(piped_stdin(buf))  } else { None };
 		Ok(match self {
 			Filter::NoFilter => if let Some(s) = name {
-				Box::new(File::open(s.as_ref())?)
+				Reader::from_file(File::open(s.as_ref())?)
 			} else if let Some(p) = pipe {
-				Box::new(p)
+				Reader::from_pipe_reader(p)
 			} else {
-				Box::new(stdin())
+				Reader::from_stdin()
 			}
 			Filter::Filter(f)=> if let Some(s) = name {
-				Box::new(open_read_filter(f, Some(File::open(s.as_ref())?))?)
+				Reader::from_child_stdout(open_read_filter(f, Some(File::open(s.as_ref())?))?)
 			} else {
-				Box::new(open_read_filter(f, pipe)?)
+				Reader::from_child_stdout(open_read_filter(f, pipe)?)
 			},
 		})
 	}
 	
-	pub fn writer<P: AsRef<Path>>(&self, name: Option<P>, fix_path: bool) -> io::Result<Box<dyn Write>> {
+	pub fn writer<P: AsRef<Path>>(&self, name: Option<P>, fix_path: bool) -> io::Result<Writer> {
 
 		// Add compression suffix if required (and not already present and fix_path is not set)
 		let name = match (name, self) {
@@ -69,16 +69,16 @@ impl Filter {
 		Ok(match self {
 
 			Filter::NoFilter => if let Some(s) = name {
-				Box::new(Writer::from_file(File::create(&s)?))
+				Writer::from_file(File::create(&s)?)
 			} else {
 
-				Box::new(Writer::from_stdout())
+				Writer::from_stdout()
 			},
 			Filter::Filter(f) => if let Some(s) = name {
-				Box::new(Writer::from_child(open_write_filter(f, Some(File::create(&s)?))?))
+				Writer::from_child(open_write_filter(f, Some(File::create(&s)?))?)
 			} else {
 				let none: Option<File> = None;
-				Box::new(Writer::from_child(open_write_filter(f, none)?))
+				Writer::from_child(open_write_filter(f, none)?)
 			},
 		})
 	}
@@ -140,15 +140,16 @@ pub fn open_write_filter<T: Into<Stdio> + std::fmt::Debug>(f: &FilterSpec, outpu
 		Ok(proc) => Ok(proc),
 		Err(error) => Err(Error::new(ErrorKind::Other, format!("Error executing pipe command '{}': {}", f.path().display(), error))),
 	}
-}	
-
-enum WriterType {
+}
+#[derive(Debug)]
+pub enum WriterType {
 	File(File),
 	ChildStdin(ChildStdin),
 	Stdout(Stdout),
 }
 
-struct Writer {
+#[derive(Debug)]
+pub struct Writer {
 	child: Option<Child>,
 	wrt: Option<WriterType>,
 }
@@ -182,19 +183,56 @@ impl Drop for Writer {
 }
 
 impl Writer {
-	fn from_child(mut child: Child) -> Self {
+	pub fn from_child(mut child: Child) -> Self {
 		let wrt = child.stdin.take().expect("Pipe error");
 		Self{child: Some(child), wrt: Some(WriterType::ChildStdin(wrt))}
 	}
 
-	fn from_file(file: File) -> Self {
+	pub fn from_file(file: File) -> Self {
 		Self{child: None, wrt: Some(WriterType::File(file))}
 	}
 
-	fn from_stdout() -> Self {
+	pub fn from_stdout() -> Self {
 		Self{child: None, wrt: Some(WriterType::Stdout(stdout()))}
 	}
-}	
+}
+
+#[derive(Debug)]
+pub enum Reader {
+	File(File),
+	ChildStdout(ChildStdout),
+	Stdin(Stdin),
+	PipeReader(PipeReader),
+}
+
+impl Read for Reader {
+	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+		match self {
+			Self::File(f) => f.read(buf),
+			Self::ChildStdout(cs) => cs.read(buf),
+			Self::Stdin(s) => s.read(buf),
+			Self::PipeReader(pr) => pr.read(buf),
+		}
+	}
+}
+
+impl Reader {
+	pub fn from_file(file: File) -> Self {
+		Self::File(file)
+	}
+
+	pub fn from_stdin() -> Self {
+		Self::Stdin(stdin())
+	}
+
+	pub fn from_child_stdout(cs: ChildStdout) -> Self {
+		Self::ChildStdout(cs)
+	}
+
+	pub fn from_pipe_reader(pr: PipeReader) -> Self {
+		Self::PipeReader(pr)
+	}
+}
 
 /// A compressed reader or writer builder, giving control as to how the reader is generated.
 ///
@@ -400,7 +438,7 @@ impl CompressIo {
 	///   Ok(())
 	/// }
 	/// ```
-	pub fn reader(&self) -> io::Result<Box<dyn Read>> {
+	pub fn reader(&self) -> io::Result<Reader> {
 		let mut buf = CheckBuf::default();
 		let filter = Filter::new_decompress_filter(check_read_ctype(self.path.as_ref(), self.ctype, Some(&mut buf))?)?;
 		filter.reader(self.path.as_ref(), buf)
@@ -425,7 +463,7 @@ impl CompressIo {
 	///   Ok(())
 	/// }
 	/// ```
-	pub fn bufreader(&self) -> io::Result<BufReader<Box<dyn Read>>> {
+	pub fn bufreader(&self) -> io::Result<BufReader<Reader>> {
 		self.reader().map(|r| BufReader::new(r))
 	}
 
@@ -446,7 +484,7 @@ impl CompressIo {
 	///   Ok(())
 	/// }
 	/// ```
-	pub fn writer(&self) -> io::Result<Box<dyn Write>> {
+	pub fn writer(&self) -> io::Result<Writer> {
 		let ctype = if self.ctype == CompressType::Unknown {
 			if let Some(p) = self.path.as_ref() {
 				CompressType::from_suffix(p)
@@ -477,7 +515,7 @@ impl CompressIo {
 	///   Ok(())
 	/// }
 	/// ```
-	pub fn bufwriter(&self) -> io::Result<BufWriter<Box<dyn Write>>> {
+	pub fn bufwriter(&self) -> io::Result<BufWriter<Writer>> {
 		self.writer().map(|w| BufWriter::new(w))
 	}
 }

@@ -174,7 +174,8 @@ pub async fn open_write_filter(f: &FilterSpec, output: Option<Stdio>) -> io::Res
 	}
 }
 
-struct WriterType<T: AsyncWrite + Unpin> {
+#[derive(Debug)]
+pub struct WriterType<T: AsyncWrite + Unpin> {
 	inner: T,
 }
 
@@ -190,7 +191,8 @@ impl <T: AsyncWrite + Unpin>AsyncWrite for WriterType<T> {
 	}
 }
 
-struct Writer<T: AsyncWrite + Unpin> {
+#[derive(Debug)]
+pub struct Writer<T: AsyncWrite + Unpin> {
 	child: Option<Child>,
 	wrt: Option<WriterType<T>>,
 }
