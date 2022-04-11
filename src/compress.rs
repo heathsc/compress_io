@@ -57,7 +57,7 @@ impl Filter {
 		})
 	}
 	
-	pub fn writer<P: AsRef<Path>>(&self, name: Option<P>, fix_path: bool) -> io::Result<Writer> {
+	pub fn writer<P: AsRef<Path>>(&self, name: Option<P>, fix_path: bool, no_wait: bool) -> io::Result<Writer> {
 
 		// Add compression suffix if required (and not already present and fix_path is not set)
 		let name = match (name, self) {
@@ -75,10 +75,10 @@ impl Filter {
 				Writer::from_stdout()
 			},
 			Filter::Filter(f) => if let Some(s) = name {
-				Writer::from_child(open_write_filter(f, Some(File::create(&s)?))?)
+				Writer::from_child(open_write_filter(f, Some(File::create(&s)?))?, no_wait)
 			} else {
 				let none: Option<File> = None;
-				Writer::from_child(open_write_filter(f, none)?)
+				Writer::from_child(open_write_filter(f, none)?, no_wait)
 			},
 		})
 	}
@@ -141,79 +141,117 @@ pub fn open_write_filter<T: Into<Stdio> + std::fmt::Debug>(f: &FilterSpec, outpu
 		Err(error) => Err(Error::new(ErrorKind::Other, format!("Error executing pipe command '{}': {}", f.path().display(), error))),
 	}
 }
+
+/// A compressed writer generated (normally) by [`CompressIo::writer`] or
+/// [`CompressIo::bufwriter`].
+///
 #[derive(Debug)]
-pub enum WriterType {
+pub enum Writer {
+	/// Writer created from a [`std::fs::File`]
 	File(File),
+
+	/// Writer created from a [`std::process::Child`] which will be waited on
+	/// when the instance is dropped
+	Child(Option<ChildStdin>, Option<Child>),
+
+	/// Writer created from a [`std::process::ChildStdin`] which will be not waited on
+	/// when the instance is dropped
 	ChildStdin(ChildStdin),
+
+	/// Writer created from a [`std::io::Stdout`]
 	Stdout(Stdout),
 }
 
-#[derive(Debug)]
-pub struct Writer {
-	child: Option<Child>,
-	wrt: Option<WriterType>,
+impl Writer {
+	/// Create a writer from a [`std::process::Child`].  If `no_wait` is false create
+	/// a [`Writer::Child`] instance that will wait for the child process
+	/// to end when the writer is dropped, otherwise it will create a
+	/// [`Writer::ChildStdin`] instance that will not wait.  In this case
+	/// care must be taken if the output file is to be opened for reading
+	/// immediately after the writer is dropped as there is no assurance that
+	/// the data has been completely written to disk
+	pub fn from_child(mut child: Child, no_wait: bool) -> Self {
+		let cs = child.stdin.take().expect("Pipe error");
+		if no_wait {
+			Self::ChildStdin(cs)
+		} else {
+			Self::Child(Some(cs), Some(child))
+		}
+	}
+
+	/// Returns the [`std::process::Child`] instance from a [`Writer::Child`].  Has no effect
+	/// on other variants.  If called then the child process will *not* be waited
+	/// on when the writer is dropped, and the caller can wait for the child to
+	/// finish when required.
+	///
+	/// Important! If `wait` is called before the writer is dropped then
+	/// the wait call can block.
+	pub fn take_child(&mut self) -> Option<Child> {
+		match self {
+			Self::Child(_, ch) => ch.take(),
+			_ => None,
+		}
+	}
+
+
+	pub fn from_file(file: File) -> Self {
+		Self::File(file)
+	}
+
+	pub fn from_stdout() -> Self {
+		Self::Stdout(stdout())
+	}
 }
 
 impl Write for Writer {
 	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-		match &mut self.wrt {
-			Some(WriterType::File(f)) => f.write(buf),
-			Some(WriterType::ChildStdin(c)) => c.write(buf),
-			Some(WriterType::Stdout(s)) => s.write(buf),
-			None => Ok(0),
+		match self {
+			Self::File(f) => f.write(buf),
+			Self::Child(Some(c), _) => c.write(buf),
+			Self::ChildStdin(c) => c.write(buf),
+			Self::Stdout(s) => s.write(buf),
+			_ => Ok(0),
 		} 
 	}
 	fn flush(&mut self) -> io::Result<()> {
-		match &mut self.wrt {
-			Some(WriterType::File(f)) => f.flush(),
-			Some(WriterType::ChildStdin(c)) => c.flush(),
-			Some(WriterType::Stdout(s)) => s.flush(),
-			None => Ok(()),
+		match self {
+			Self::File(f) => f.flush(),
+			Self::Child(Some(c), _) => c.flush(),
+			Self::ChildStdin(c) => c.flush(),
+			Self::Stdout(s) => s.flush(),
+			_ => Ok(()),
 		} 		
 	}
 }
 
 impl Drop for Writer {
 	fn drop(&mut self) {
-		if let Some(mut child) = self.child.take() {
-			drop(self.wrt.take());	
-			let _ = child.wait();
+		if let Self::Child(cs, ch) = self {
+			if let Some(mut child) = ch.take() {
+				drop(cs.take());
+				let _ = child.wait();
+			}
 		}
 	}
 }
 
-impl Writer {
-	pub fn from_child(mut child: Child) -> Self {
-		let wrt = child.stdin.take().expect("Pipe error");
-		Self{child: Some(child), wrt: Some(WriterType::ChildStdin(wrt))}
-	}
-
-	pub fn from_file(file: File) -> Self {
-		Self{child: None, wrt: Some(WriterType::File(file))}
-	}
-
-	pub fn from_stdout() -> Self {
-		Self{child: None, wrt: Some(WriterType::Stdout(stdout()))}
-	}
-}
+/// A compressed reader generated (normally) by [`CompressIo::reader`] or
+/// [`CompressIo::bufreader`].
+///
 
 #[derive(Debug)]
 pub enum Reader {
+	/// Reader created from a [`std::fs::File`]
 	File(File),
-	ChildStdout(ChildStdout),
-	Stdin(Stdin),
-	PipeReader(PipeReader),
-}
 
-impl Read for Reader {
-	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-		match self {
-			Self::File(f) => f.read(buf),
-			Self::ChildStdout(cs) => cs.read(buf),
-			Self::Stdin(s) => s.read(buf),
-			Self::PipeReader(pr) => pr.read(buf),
-		}
-	}
+	/// Reader created from a [`std::process::ChildStdout`]
+	ChildStdout(ChildStdout),
+
+	/// Reader created from [`std::io::Stdin`]
+	Stdin(Stdin),
+
+	/// Reader created from a [`os_pipe::PipeReader`]
+	PipeReader(PipeReader),
 }
 
 impl Reader {
@@ -234,12 +272,23 @@ impl Reader {
 	}
 }
 
+impl Read for Reader {
+	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+		match self {
+			Self::File(f) => f.read(buf),
+			Self::ChildStdout(cs) => cs.read(buf),
+			Self::Stdin(s) => s.read(buf),
+			Self::PipeReader(pr) => pr.read(buf),
+		}
+	}
+}
+
 /// A compressed reader or writer builder, giving control as to how the reader is generated.
 ///
-/// A default config can be generated using `CompressIo::new()` followed by `reader()`,
-/// `bufreader()`, `writer()` or `bufwriter()` to make the reader or writer.  Additional
-/// commands can be used to set the file name, specify the compression to be used, or
-/// set additional options prior to opening the reader or writer.
+/// A default config can be generated using [`CompressIo::new`] followed by [`CompressIo::reader`],
+/// [`CompressIo::bufreader`], [`CompressIo::writer`] or [`CompressIo::bufwriter`] to make the
+/// reader or writer.  Additional commands can be used to set the file name, specify the compression
+/// to be used, or set additional options prior to opening the reader or writer.
 ///
 /// # Examples
 ///
@@ -266,6 +315,7 @@ pub struct CompressIo {
 	ctype: CompressType,
 	cthreads: CompressThreads,
 	fix_path: bool,
+	no_wait: bool,
 }
 
 impl CompressIo {
@@ -299,7 +349,7 @@ impl CompressIo {
 	/// [bzip2] even though it has a suffix of `.gz`.
 	/// ```no_run
 	/// use compress_io::compress::CompressIo;
-    ///
+	///
 	/// let mut rd = CompressIo::new().path("foo.gz").reader()
 	///   .expect("Error opening input file");
 	/// ```
@@ -419,6 +469,33 @@ impl CompressIo {
 		self
 	}
 
+	/// Don't wait for child process to finish when writer is dropped.
+	/// Has no effect on readers.  By default when a writer or bufwriter is dropped and
+	/// is closed, the child process will be waited on until the child process terminates.
+	/// This avoids problems that can occur if the file is re-opened for reading directly
+	/// after it is closed before the child process has finished writing to disk.
+	///
+	/// While waiting is the right thing to do in most cases, it can lead to unexpected pauses
+	/// as the thread can block when the writer is dropped.  If this behaviour is not wanted then
+	/// `no_wait()` can be used to prevent waiting on dropping.
+	///
+	/// An alternative to `no_wait()` is to use [`Writer::take_child`] on the writer.  This returns
+	/// the child process so that the calling thread can choose when to wait for the child process.
+	///
+	/// # Examples
+	///
+	/// ```no_run
+	/// use compress_io::compress::CompressIo;
+	/// use compress_io::compress_type::CompressType;
+	///  // Generate ouput file foo.bz2 with compression suffix
+	///  let mut wrt1 = CompressIo::new().path("foo").ctype(CompressType::Bzip2).no_wait()
+	///    .writer().expect("Error opening output file");
+	/// ```
+	pub fn no_wait(&mut self) -> &mut Self {
+		self.no_wait = true;
+		self
+	}
+
 	/// Generates a [`Read`] instance using the supplied settings.  This will return [`io::Error`]
 	/// on failure which could be due to various reasons such as the source file not existing or
 	/// not being accessible, or a suitable utility for decompressing not being available in the
@@ -495,7 +572,7 @@ impl CompressIo {
 			self.ctype
 		};
 		let filter = Filter::new_compress_filter(ctype, self.cthreads)?;
-		filter.writer(self.path.as_ref(), self.fix_path)
+		filter.writer(self.path.as_ref(), self.fix_path, self.no_wait)
 	}
 
 	/// Generates a [`BufWriter'] instance using the supplied settings.  This will return
