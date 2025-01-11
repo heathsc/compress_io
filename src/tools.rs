@@ -8,7 +8,7 @@ use std::{
 use crate::compress_type::{CompressType, CompressThreads};
 use crate::path_utils::find_exec_path;
 
-#[derive(Debug, Hash)]
+#[derive(Debug)]
 pub struct ToolKey {
 	ix: usize,
 	priority: usize,
@@ -40,6 +40,13 @@ impl PartialEq for ToolKey {
 
 impl Eq for ToolKey { }
 
+impl std::hash::Hash for ToolKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.ix.hash(state);
+        self.priority.hash(state);
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct ToolRegister {
 	decompress_tools: HashMap<CompressType, Vec<ToolKey>>,
@@ -54,12 +61,12 @@ impl ToolRegister {
 		tool.add_path();
 		let ix = self.tools.len();
 		for service in tool.decompress_services() {
-			let v = self.decompress_tools.entry(service.compress_type).or_insert_with(Vec::new);
+			let v = self.decompress_tools.entry(service.compress_type).or_default();
 			v.push(ToolKey::new(ix, service.priority));
 			v.sort_unstable()
 		}
 		for service in tool.compress_services() {
-			let v = self.compress_tools.entry(service.compress_type).or_insert_with(Vec::new);
+			let v = self.compress_tools.entry(service.compress_type).or_default();
 			v.push(ToolKey::new(ix, service.priority));
 			v.sort_unstable()
 		}
